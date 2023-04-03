@@ -95,7 +95,7 @@ def main():
             "decapoda-research/llama-7b-hf"
         )
     else:
-        tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
+        tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2-large")
 
     tokenizer.add_special_tokens(
         {
