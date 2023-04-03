@@ -5,7 +5,7 @@ from azure.ai.ml.entities import Data
 from azure.ai.ml.constants import AssetTypes
 from util import get_ml_client, generate_prompt, TokenizerTokens
 import transformers
-
+import shutil
 
 def _setup_dataset(tokenizer, path: str, destination: str):
 
@@ -40,7 +40,27 @@ def _setup_dataset(tokenizer, path: str, destination: str):
         }
     )
 
-    dataset.set_format(type='torch', columns=['input_ids', 'target_ids'])
+    dataset.set_format(
+        type='torch',
+        columns=['input_ids', 'target_ids']
+    )
+
+    dataset = dataset.map(
+        lambda e: {
+            "attention_mask": e["input_ids"].ne(tokenizer.pad_token_id)
+        }
+    )
+
+    dataset = dataset.map(
+        lambda e: {
+                "target_weight": e["target_ids"].ne(tokenizer.pad_token_id).float()
+        }
+    )
+
+    dataset.set_format(
+        type='torch',
+        columns=['input_ids', 'target_ids', "attention_mask", "target_weight"]
+    )
 
     dataset.save_to_disk(destination)
 
@@ -60,13 +80,22 @@ def main():
         help="The maximum number of tokens the model will be trained on."
     )
 
+    parser.add_argument(
+        '--model', type=str, default='llama',
+    )
+
     args = parser.parse_args()
+
+    assert args.model in ['llama', 'gpt2'], "only llama and gpt2 are supported"
 
     ml_client = get_ml_client()
 
-    tokenizer = transformers.LlamaTokenizer.from_pretrained(
-        "decapoda-research/llama-7b-hf"
-    )
+    if args.model == "llama":
+        tokenizer = transformers.LlamaTokenizer.from_pretrained(
+            "decapoda-research/llama-7b-hf"
+        )
+    else:
+        tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
 
     tokenizer.add_special_tokens(
         {
@@ -79,13 +108,16 @@ def main():
 
     tokenizer.model_max_length = args.max_tokens
 
+    tokenizer_path = f"artifacts/tokenizer/{args.model}" 
+    dataset_path = f"artifacts/dataset/{args.model}" 
+
     print("Register the tokenizer")
-    tokenizer.save_pretrained("artifacts/tokenizer")
+    tokenizer.save_pretrained(tokenizer_path)
     file_model = Model(
-        path="artifacts/tokenizer",
+        path=tokenizer_path,
         type=AssetTypes.CUSTOM_MODEL,
-        name="llama_tokenizer",
-        description="Llama tokenizer for hg"
+        name=f"{args.model}_tokenizer" ,
+        description=f"{args.model} tokenizer for hg",
     )
     ml_client.models.create_or_update(file_model)
 
@@ -93,14 +125,14 @@ def main():
     dataset = _setup_dataset(
         tokenizer=tokenizer,
         path="data/alpaca_data_cleaned.json",
-        destination="artifacts/dataset",
+        destination=dataset_path,
     )
 
     dataset = Data(
-        path="artifacts/dataset",
+        path=dataset_path,
         type=AssetTypes.URI_FOLDER,
-        description="alpaca data cleaned",
-        name=args.dataset_name,
+        description=f"alpaca data cleaned for {args.model}",
+        name=f"{args.model}_alpaca_data_cleaned",
     )
     ml_client.data.create_or_update(dataset)
 
