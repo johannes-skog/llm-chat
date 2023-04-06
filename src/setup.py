@@ -52,7 +52,7 @@ def _setup_dataset(tokenizer, path: str, destination: str):
         }
     )
 
-    dataset s= dataset.map(
+    dataset = dataset.map(
         lambda e: {
                 "target_weight": e["target_ids"].ne(tokenizer.pad_token_id).float()
         }
@@ -62,6 +62,15 @@ def _setup_dataset(tokenizer, path: str, destination: str):
         type='torch',
         columns=['input_ids', 'target_ids', "attention_mask", "target_weight"]
     )
+
+    def set_labels(example):
+        target_ids = example["target_ids"]
+        target_ids[target_ids==tokenizer.pad_token_id] = -100 # ignore loss on padding tokens
+        example["target_ids"] = target_ids
+        
+        return example
+
+    dataset = dataset.map(set_labels)
 
     dataset.save_to_disk(destination)
 
@@ -86,11 +95,16 @@ def main():
         '--model', type=str, default='llama',
     )
 
+    parser.add_argument(
+        '--local',
+        action='store_true',
+        default=False,
+        help="do not push any to the cloud"
+    )
+
     args = parser.parse_args()
 
     assert args.model in ['llama', 'gpt2'], "only llama and gpt2 are supported"
-
-    ml_client = get_ml_client()
 
     if args.model == "llama":
         
@@ -114,18 +128,8 @@ def main():
 
     tokenizer.model_max_length = args.max_tokens
 
-    tokenizer_path = f"artifacts/tokenizer/{args.model}" 
-    dataset_path = f"artifacts/dataset/{args.model}" 
-
-    print("Register the tokenizer")
-    tokenizer.save_pretrained(tokenizer_path)
-    file_model = Model(
-        path=tokenizer_path,
-        type=AssetTypes.CUSTOM_MODEL,
-        name=DataNames.GPT2_TOKENIZER if args.model == "gpt2" else DataNames.LLAMA_TOKENIZER ,
-        description=f"{args.model} tokenizer for hg",
-    )
-    ml_client.models.create_or_update(file_model)
+    tokenizer_path = f"artifacts/tokenizer" 
+    dataset_path = f"artifacts/dataset" 
 
     print("working with the dataset")
     dataset = _setup_dataset(
@@ -134,15 +138,28 @@ def main():
         destination=dataset_path,
     )
 
-    print(dataset["train"]["input_ids"].max())
+    tokenizer.save_pretrained(tokenizer_path)
 
-    dataset = Data(
-        path=dataset_path,
-        type=AssetTypes.URI_FOLDER,
-        description=f"alpaca data cleaned for {args.model}",
-        name=DataNames.GPT2_DATASET if args.model == "gpt2" else DataNames.LLAMA_DATASET,
-    )
-    ml_client.data.create_or_update(dataset)
+    if args.local is False:
+
+        ml_client = get_ml_client()
+
+        print("Register the tokenizer")
+        file_model = Model(
+            path=tokenizer_path,
+            type=AssetTypes.CUSTOM_MODEL,
+            name=DataNames.GPT2_TOKENIZER if args.model == "gpt2" else DataNames.LLAMA_TOKENIZER ,
+            description=f"{args.model} tokenizer for hg",
+        )
+        ml_client.models.create_or_update(file_model)
+
+        dataset = Data(
+            path=dataset_path,
+            type=AssetTypes.URI_FOLDER,
+            description=f"alpaca data cleaned for {args.model}",
+            name=DataNames.GPT2_DATASET if args.model == "gpt2" else DataNames.LLAMA_DATASET,
+        )
+        ml_client.data.create_or_update(dataset)
 
 if __name__ == "__main__":
     main()

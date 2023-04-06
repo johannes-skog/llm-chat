@@ -35,26 +35,28 @@ def main():
 
 class DataModule(pl.LightningDataModule):
     
-    DATASET_PATH = f"artifacts/alpaca/downloaded"
+    DATASET_PATH = f"artifacts/dataset"
     
     def __init__(
         self,
         dataset_name: str,
         batch_size_train: int = 1,
         workers: int = 2,
-        download: bool = False,
         subset_train: int = None,
+        local: bool = False,
     ):
         
         super().__init__()
         
-        if download:
+        if local is False:
+
             download_dataset(
                 ml_client=get_ml_client(),
                 name=dataset_name,
                 destination=DataModule.DATASET_PATH,
             )
         
+        self.local = local
         self.dataset_name = dataset_name
         self.workers = workers
         self.subset_train = subset_train
@@ -63,8 +65,6 @@ class DataModule(pl.LightningDataModule):
     def setup(self, stage: str):
         
         self._dataset_hg = load_from_disk(DataModule.DATASET_PATH)
-
-        print(self._dataset_hg["train"]["input_ids"].max())
 
     def train_dataloader(self):
         
@@ -121,20 +121,17 @@ def cli_main():
 
     cli.trainer.logger = TensorBoardLogger("artifacts", name="alpaca")
 
-    cli.datamodule.setup("git")
-
-    print(cli.trainer.logger.log_dir, cli.trainer.logger.name)
-
     return cli, checkpoint_callback_spaced
 
 if __name__ == "__main__":
 
     cli, checkpoint_callback = cli_main()
 
-    # print(cli.model._model._encoder.print_trainable_parameters())
     model = cli.model
 
     cli.trainer.fit(model, cli.datamodule)
+
+    cli.trainer.save_checkpoint("artifacts/final.ckpt")
 
     is_llama_model = isinstance(model._model, Llama)
 
@@ -143,18 +140,17 @@ if __name__ == "__main__":
 
     cli.trainer.save_checkpoint("artifacts/final.ckpt")
 
-    """
-
     print("Download tokenizer")
     tokenizer_name = (
         DataNames.GPT2_TOKENIZER if is_llama_model is False else DataNames.LLAMA_DATASET
     )
 
-    download_model(
-        ml_client=get_ml_client(),
-        name=tokenizer_name,
-        destination="artifacts/tokenizer", 
-    )
+    if cli.datamodule.local is False:
+        download_model(
+            ml_client=get_ml_client(),
+            name=tokenizer_name,
+            destination="artifacts/tokenizer", 
+        )
 
     if is_llama_model:
         tokenizer = transformers.LlamaTokenizer.from_pretrained(
@@ -167,26 +163,28 @@ if __name__ == "__main__":
 
     best_model_path = checkpoint_callback.best_model_path
 
-    ml_client = get_ml_client()
-    
-    print("Register model")
-    file_model = Model(
-        path=best_model_path,
-        type=AssetTypes.CUSTOM_MODEL,
-        name="TEST_alpaca",
-        description="Llama trained on alpaca data"
-    )
-    ml_client.models.create_or_update(file_model)
-
-    print("Register a traced model")
+    print("Creating a traced model")
     traced_model = create_traced_model(tokenizer, model._model) # Do it on the pt model
     traced_model.save("artifacts/traced.pt")
-    file_model = Model(
-        path="artifacts/traced.pt",
-        type=AssetTypes.CUSTOM_MODEL,
-        name="TEST_alpaca_traced",
-        description="XLMR trained on twitter sentiment dataset. traced"
-    )
-    ml_client.models.create_or_update(file_model)
-    
-    """
+
+    if cli.datamodule.local is False:
+
+        ml_client = get_ml_client()
+
+        print("Register a traced model")
+        file_model = Model(
+            path="artifacts/traced.pt",
+            type=AssetTypes.CUSTOM_MODEL,
+            name="TEST_alpaca_traced",
+            description="XLMR trained on twitter sentiment dataset. traced"
+        )
+        ml_client.models.create_or_update(file_model)
+
+        print("Register model")
+        file_model = Model(
+            path=best_model_path,
+            type=AssetTypes.CUSTOM_MODEL,
+            name="TEST_alpaca",
+            description="Llama trained on alpaca data"
+        )
+        ml_client.models.create_or_update(file_model)

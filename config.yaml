@@ -4,7 +4,7 @@ trainer:
   accelerator: auto
   default_root_dir: artifacts
   # resume_from_checkpoint: null # reload the model
-  max_epochs: 3000
+  max_epochs: 2
   accumulate_grad_batches: 1
   log_every_n_steps: 1
   enable_checkpointing: true
@@ -47,11 +47,11 @@ model:
     init_args:
       from_pretrained: true
 data: 
+  local: true
   dataset_name: gpt2_alpaca_data_cleaned
   batch_size_train: 5
   subset_train: 10
   workers: 2
-  download: false
 
 
 

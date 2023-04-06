@@ -149,21 +149,13 @@ class GeneratorModel(pl.LightningModule):
         
         super().__init__()
         
-        #assert model_name in ["llama", "gpt2"]
-
-        #if model_name == "llama":
-        #    self._model = Llama(from_pretrained=from_pretrained, **kwargs)
-        #elif model_name == "gpt2":
-        #    self._model = Gpt2(from_pretrained=from_pretrained, **kwargs)
-
         self._model = base_model
 
-        # self.model_name = model_name
         self._vobab_size = self._model._vobab_size
         self._learning_rate = learning_rate
         self._T_0 = T_0
         self._T_mult = T_mult
-        self._loss_func = torch.nn.CrossEntropyLoss(reduction="none")
+        self._loss_func = torch.nn.CrossEntropyLoss()
 
         if lora:
             self.setup_lora()
@@ -192,7 +184,7 @@ class GeneratorModel(pl.LightningModule):
         
         l = self._loss_func(shift_logits, shift_labels)
 
-        l = (l * shift_weights).sum() / shift_weights.sum()
+        # l = (l * shift_weights).sum() / shift_weights.sum()
 
         return l
     
