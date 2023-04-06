@@ -49,4 +49,4 @@ torchmetrics
 torchtext
 tornado==6.2
 transformers @ git+https://github.com/huggingface/transformers@fc5b7419d4c8121d8f1fa915504bcc353422559e
-sentencepiece=0.1.97
+sentencepiece==0.1.97
