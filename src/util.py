@@ -1,8 +1,17 @@
 
 from azure.ai.ml import MLClient
 from azureml.core.authentication import ServicePrincipalAuthentication
+import azure.ai.ml._artifacts._artifact_utilities as artifact_utils
 import os
+import torch
 
+class DataNames:
+
+    GPT2_TOKENIZER = "gpt2_tokenizer"
+    GPT2_DATASET = "gpt2_alpaca_data_cleaned"
+
+    LLAMA_TOKENIZER = "llama_tokenizer"
+    LLAMA_DATASET = "llama_alpaca_data_cleaned"
 
 
 def get_latest_data_version(name: str):
@@ -42,6 +51,41 @@ def get_ml_client():
 
     return ml_client
 
+def download_dataset(
+    ml_client,
+    name: str,
+    destination: str,
+    version: str = None,
+):
+    if version is None:
+        version = get_latest_data_version(name)
+    
+    print("version is: " + str(version)  + " for " + name)
+    data_info = ml_client.data.get(name=name, version=str(version))
+
+    artifact_utils.download_artifact_from_aml_uri(
+        uri=data_info.path,
+        destination=destination,
+        datastore_operation=ml_client.datastores
+    )
+
+def download_model(
+    ml_client,
+    name: str,
+    destination: str,
+    version: str = None,
+):
+    if version is None:
+        version = get_latest_model_version(name)
+
+    print("version is: " + str(version)  + " for " + name)
+    data_info = ml_client.models.get(name=name, version=str(version))
+
+    artifact_utils.download_artifact_from_aml_uri(
+        uri=data_info.path,
+        destination=destination,
+        datastore_operation=ml_client.datastores
+    )
 
 def generate_prompt(input: str, instruction: str):
     
@@ -66,3 +110,24 @@ class TokenizerTokens:
     DEFAULT_EOS_TOKEN = "</s>"
     DEFAULT_BOS_TOKEN = "</s>"
     DEFAULT_UNK_TOKEN = "</s>"
+
+
+def create_traced_model(tokenizer, model):
+
+    dd = tokenizer(
+        ["This is a test...", "Detta är ett test..."],
+        return_tensors="pt",
+        padding=True
+    )
+
+    model.eval().cpu()
+
+    jit_model = torch.jit.trace(
+        model.forward,
+        example_kwarg_inputs={
+            "input_ids": dd["input_ids"],
+            "attention_mask": dd["attention_mask"]
+        }
+    )
+
+    return jit_model

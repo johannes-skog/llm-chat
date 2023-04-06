@@ -92,6 +92,9 @@ class Llama(torch.nn.Module):
         )
 
         self._model = peft.get_peft_model(self._model, peft_config)
+
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor):
+        return self._model(input_ids=input_ids, attention_mask=attention_mask).logits
             
 class Gpt2(torch.nn.Module):
     
@@ -102,7 +105,7 @@ class Gpt2(torch.nn.Module):
         if from_pretrained:
             
             self._model = transformers.GPT2LMHeadModel.from_pretrained(
-                "gpt2-large", is_decoder=True, **kwargs
+                "gpt2", is_decoder=True, **kwargs
             )
             
         else:
@@ -118,18 +121,24 @@ class Gpt2(torch.nn.Module):
         peft_config = peft.LoraConfig(
             task_type=peft.TaskType.CAUSAL_LM,
             inference_mode=False,
-            r=8,
-            lora_alpha=32,
+            r=16,
+            lora_alpha=27,
             lora_dropout=0.1,
         )
 
         self._model = peft.get_peft_model(self._model, peft_config)
+
+        self._model.lm_head.requires_grad = True
+
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor):
+        return self._model(input_ids=input_ids, attention_mask=attention_mask).logits
             
 class GeneratorModel(pl.LightningModule):
     
     def __init__(
         self,
-        model_name: str,
+        # model_name: str,
+        base_model: torch.nn.Module,
         T_mult: int = 2,
         T_0: int = 1000,
         learning_rate: float = 1e-5,
@@ -140,18 +149,21 @@ class GeneratorModel(pl.LightningModule):
         
         super().__init__()
         
-        assert model_name in ["llama", "gpt2"]
+        #assert model_name in ["llama", "gpt2"]
 
-        if model_name == "llama":
-            self._model = Llama(from_pretrained=from_pretrained, **kwargs)
-        elif model_name == "gpt2":
-            self._model = Gpt2(from_pretrained=from_pretrained, **kwargs)
+        #if model_name == "llama":
+        #    self._model = Llama(from_pretrained=from_pretrained, **kwargs)
+        #elif model_name == "gpt2":
+        #    self._model = Gpt2(from_pretrained=from_pretrained, **kwargs)
 
+        self._model = base_model
+
+        # self.model_name = model_name
         self._vobab_size = self._model._vobab_size
         self._learning_rate = learning_rate
         self._T_0 = T_0
         self._T_mult = T_mult
-        self._loss_func = torch.nn.CrossEntropyLoss()
+        self._loss_func = torch.nn.CrossEntropyLoss(reduction="none")
 
         if lora:
             self.setup_lora()
@@ -169,20 +181,22 @@ class GeneratorModel(pl.LightningModule):
         # Shift so that tokens < n predict n
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
+        shift_weights = weights[..., 1:].contiguous()
 
         # Flatten the tokens
         shift_logits = shift_logits.view(-1, self._vobab_size)
         shift_labels = shift_labels.view(-1)
+        shift_weights = shift_weights.view(-1)
+
+        #print(shift_logits.shape, shift_labels.shape)
         
         l = self._loss_func(shift_logits, shift_labels)
-        
+
+        l = (l * shift_weights).sum() / shift_weights.sum()
+
         return l
     
     def training_step(self, batch, batch_idx):
-        
-        ## acccess tensorboard
-        tensorboard = self.logger.experiment
-        # tensorboard.add_histogram(...)
         
         y = self.forward(
             input_ids=batch["input_ids"],
@@ -190,7 +204,7 @@ class GeneratorModel(pl.LightningModule):
         )
         
         l = self.loss(
-            logits=y, labels=batch["label"], weights=batch["weights"]
+            logits=y, labels=batch["target_ids"], weights=batch["target_weight"]
         )
         
         self.log("learning_rate", self._opt.param_groups[0]["lr"])
@@ -206,7 +220,7 @@ class GeneratorModel(pl.LightningModule):
         )
 
         l = self.loss(
-            logits=y, labels=batch["label"], weights=batch["weights"]
+            logits=y, labels=batch["target_ids"], weights=batch["target_weight"]
         )
         
         self.log("loss_val", l)
