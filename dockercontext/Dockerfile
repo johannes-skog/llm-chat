@@ -10,7 +10,8 @@ RUN apt-get -y install \
     curl \
     wget \
     build-essential \
-    screen
+    screen \
+    git
 
 # install az-cli
 RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
@@ -18,6 +19,8 @@ RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 COPY requirements.txt /tmp
-COPY setup.txt /tmp
 
-RUN sh /tmp/setup.txt
+RUN pip install -r /tmp/requirements.txt
+
+COPY entrypoint.sh /tmp
+ENTRYPOINT ["bash", "/tmp/entrypoint.sh"]

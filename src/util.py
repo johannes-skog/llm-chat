@@ -5,6 +5,8 @@ import azure.ai.ml._artifacts._artifact_utilities as artifact_utils
 import os
 import torch
 
+IGNORE_LOSS_ID = -100
+
 class DataNames:
 
     GPT2_TOKENIZER = "gpt2_tokenizer"
@@ -131,3 +133,11 @@ def create_traced_model(tokenizer, model):
     )
 
     return jit_model
+
+
+from lightning.pytorch.utilities.deepspeed import convert_zero_checkpoint_to_fp32_state_dict
+def unshard_deepspeed(save_path: str, output_path: str = "final.ckpt"):
+    # lightning deepspeed has saved a directory instead of a file, shareded model
+    # https://lightning.ai/docs/pytorch/stable/advanced/model_parallel.html#deepspeed-zero-stage-3-single-file
+    convert_zero_checkpoint_to_fp32_state_dict(save_path, output_path)
+    # Only the LORA-params are saved to final.ckpt -> non strict load from checkpoint after the initial weights have been loaded

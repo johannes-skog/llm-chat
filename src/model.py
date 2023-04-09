@@ -9,55 +9,8 @@ import peft
 import lightning.pytorch as pl
 import torchmetrics
 import transformers
-
-@dataclass
-class TrainingStructure():
-
-    TRAIN_DATASET: str = "train"
-    VAL_DATASET: str = "val"
-
-    optimizer: Any = None
-
-    dataloaders: Dict = field(default_factory=dict)
-    frequency: Dict = field(default_factory=dict)
-
-    iters: Dict = field(default_factory=dict)
-
-    writer: Any = None
-
-    global_iteration: int = 0
-
-@dataclass
-class TrainingLoopStructure():
-
-    current_iteration = None
-    iterations: int = None
-    save_freq: int = None
-
-class NLPmodel(torch.nn.Module):
-
-    def __init__(
-        self,
-        encoder: torch.nn.Module,
-        tokenizer,
-        model_folder: str = "models/ckp",
-        device: str = None,
-        lora: bool = False,
-    ):
-
-        super().__init__()
-
-        self._encoder = encoder
-        self._tokenizer = tokenizer
-        self._model_folder = model_folder
-        self._training_structure = TrainingStructure()
-
-        self._device = (
-            "cuda" if torch.cuda.is_available() else "cpu"
-        ) if device is None else device
-    
-
-
+# import deepspeed
+from util import IGNORE_LOSS_ID
 
 class Llama(torch.nn.Module):
     
@@ -85,10 +38,11 @@ class Llama(torch.nn.Module):
         peft_config = peft.LoraConfig(
             task_type=peft.TaskType.CAUSAL_LM,
             inference_mode=False,
-            r=8,
-            lora_alpha=32,
-            lora_dropout=0.1,
-            target_modules=["q_proj", "v_proj"]
+            r=16,
+            lora_alpha=16,
+            lora_dropout=0.05,
+            target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
+            bias="none",
         )
 
         self._model = peft.get_peft_model(self._model, peft_config)
@@ -122,13 +76,12 @@ class Gpt2(torch.nn.Module):
             task_type=peft.TaskType.CAUSAL_LM,
             inference_mode=False,
             r=16,
-            lora_alpha=27,
-            lora_dropout=0.1,
+            lora_alpha=16,
+            lora_dropout=0.05,
+            # target_modules=["c_attn", "c_proj"],
         )
 
         self._model = peft.get_peft_model(self._model, peft_config)
-
-        self._model.lm_head.requires_grad = True
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor):
         return self._model(input_ids=input_ids, attention_mask=attention_mask).logits
@@ -137,12 +90,10 @@ class GeneratorModel(pl.LightningModule):
     
     def __init__(
         self,
-        # model_name: str,
         base_model: torch.nn.Module,
         T_mult: int = 2,
         T_0: int = 1000,
         learning_rate: float = 1e-5,
-        from_pretrained: bool = False,
         lora: bool = False,
         **kwargs,
     ):
@@ -155,38 +106,43 @@ class GeneratorModel(pl.LightningModule):
         self._learning_rate = learning_rate
         self._T_0 = T_0
         self._T_mult = T_mult
-        self._loss_func = torch.nn.CrossEntropyLoss()
+        self._loss_func = torch.nn.CrossEntropyLoss(
+            ignore_index=IGNORE_LOSS_ID,
+            reduction="none"
+        )
 
         if lora:
-            self.setup_lora()
+            self._model.setup_lora()
 
     def forward(self, **kwargs):
         
         return self._model(**kwargs)
 
-    def setup_lora(self):
+    def loss(self, logits: torch.Tensor, labels: torch.Tensor):
 
-        self._model.setup_lora()
-    
-    def loss(self, logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
+        # print(logits.shape, labels.shape, labels.dtype)
 
         # Shift so that tokens < n predict n
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
-        shift_weights = weights[..., 1:].contiguous()
 
         # Flatten the tokens
         shift_logits = shift_logits.view(-1, self._vobab_size)
         shift_labels = shift_labels.view(-1)
-        shift_weights = shift_weights.view(-1)
 
-        #print(shift_logits.shape, shift_labels.shape)
-        
         l = self._loss_func(shift_logits, shift_labels)
 
-        # l = (l * shift_weights).sum() / shift_weights.sum()
+        not_ignore_mask = (shift_labels != IGNORE_LOSS_ID)
 
-        return l
+        l = l.sum() / not_ignore_mask.float().sum()
+
+        predicted_token = torch.argmax(shift_logits, dim=1)
+
+        accuracy_all = (predicted_token == shift_labels).float().mean()
+
+        accuracy = (predicted_token[not_ignore_mask] == shift_labels[not_ignore_mask]).float().mean()
+
+        return l, accuracy, accuracy_all
     
     def training_step(self, batch, batch_idx):
         
@@ -195,12 +151,14 @@ class GeneratorModel(pl.LightningModule):
             attention_mask=batch["attention_mask"],
         )
         
-        l = self.loss(
-            logits=y, labels=batch["target_ids"], weights=batch["target_weight"]
+        l, accuracy, accuracy_all = self.loss(
+            logits=y, labels=batch["target_ids"]
         )
         
         self.log("learning_rate", self._opt.param_groups[0]["lr"])
         self.log("loss_train", l)
+        self.log("accuracy_train", accuracy)
+        self.log("accuracy_all_train", accuracy_all)
         
         return l
 
@@ -211,15 +169,20 @@ class GeneratorModel(pl.LightningModule):
             attention_mask=batch["attention_mask"]
         )
 
-        l = self.loss(
-            logits=y, labels=batch["target_ids"], weights=batch["target_weight"]
+        l, accuracy, accuracy_all = self.loss(
+            logits=y, labels=batch["target_ids"]
         )
         
         self.log("loss_val", l)
+        self.log("accuracy_val", accuracy)
+        self.log("accuracy_all_val", accuracy_all)
 
         return l
         
     def configure_optimizers(self):
+
+        # import deepspeed
+        #self._opt = deepspeed.ops.adam.DeepSpeedCPUAdam(self.parameters(), lr=self._learning_rate)
 
         self._opt = torch.optim.Adam(self.parameters(), lr=self._learning_rate)
 

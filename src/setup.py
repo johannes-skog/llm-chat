@@ -5,10 +5,10 @@ from azure.ai.ml.entities import Data
 from azure.ai.ml.constants import AssetTypes
 from util import get_ml_client, generate_prompt, TokenizerTokens
 import transformers
-from util import DataNames
-import shutil
+from util import DataNames, IGNORE_LOSS_ID
+import copy 
 
-def _setup_dataset(tokenizer, path: str, destination: str):
+def _setup_dataset(tokenizer, path: str, destination: str, debug: bool = False):
 
     dataset = load_dataset('json', data_files=path)
 
@@ -22,7 +22,7 @@ def _setup_dataset(tokenizer, path: str, destination: str):
     )
 
     dataset = dataset.map(
-        lambda e: {"input_ids": tokenizer.encode(
+        lambda e: {"input_ids_source": tokenizer.encode(
                 e["promt_input"],
                 max_length=tokenizer.model_max_length,
                 truncation=True,
@@ -32,8 +32,12 @@ def _setup_dataset(tokenizer, path: str, destination: str):
     )
 
     dataset = dataset.map(
+        lambda e: {"target": e["promt_input"] + e["output"] + tokenizer.eos_token}  
+    )
+
+    dataset = dataset.map(
         lambda e: {"target_ids": tokenizer.encode(
-                e["output"],
+                e["target"],
                 max_length=tokenizer.model_max_length,
                 truncation=True,
                 padding='max_length',
@@ -41,36 +45,37 @@ def _setup_dataset(tokenizer, path: str, destination: str):
         }
     )
 
-    dataset.set_format(
-        type='torch',
-        columns=['input_ids', 'target_ids']
-    )
+    dataset.set_format(type='torch', columns=["target_ids", "input_ids_source"])
+
+    def _process_targets(e):
+
+        len_source = e["input_ids_source"].ne(tokenizer.pad_token_id).sum().item()
+
+        e["target_ids_masked"] = copy.deepcopy(
+            e["target_ids"]
+        )
+
+        e["attention_mask"] = e["target_ids_masked"].ne(tokenizer.pad_token_id).long()
+
+        e["target_ids_masked"][0:len_source] = IGNORE_LOSS_ID
+
+        e["target_ids_masked"][
+            e["target_ids_masked"]==tokenizer.pad_token_id
+        ] = IGNORE_LOSS_ID
+
+        return e
 
     dataset = dataset.map(
-        lambda e: {
-            "attention_mask": e["input_ids"].ne(tokenizer.pad_token_id)
-        }
+        lambda e: _process_targets(e)
     )
 
-    dataset = dataset.map(
-        lambda e: {
-                "target_weight": e["target_ids"].ne(tokenizer.pad_token_id).float()
-        }
-    )
+    if debug is False:
 
-    dataset.set_format(
-        type='torch',
-        columns=['input_ids', 'target_ids', "attention_mask", "target_weight"]
-    )
-
-    def set_labels(example):
-        target_ids = example["target_ids"]
-        target_ids[target_ids==tokenizer.pad_token_id] = -100 # ignore loss on padding tokens
-        example["target_ids"] = target_ids
-        
-        return example
-
-    dataset = dataset.map(set_labels)
+        dataset = dataset.remove_columns(
+            ["instruction", "input", "output", "promt_input", "target", "target_ids"]
+        )
+        dataset = dataset.rename_column("target_ids_masked", "target_ids")
+        dataset = dataset.rename_column("input_ids_source", "input_ids")
 
     dataset.save_to_disk(destination)
 

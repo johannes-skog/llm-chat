@@ -65,6 +65,7 @@ class DataModule(pl.LightningDataModule):
     def setup(self, stage: str):
         
         self._dataset_hg = load_from_disk(DataModule.DATASET_PATH)
+        self._dataset_hg = self._dataset_hg["train"].train_test_split(test_size=0.01)
 
     def train_dataloader(self):
         
@@ -76,12 +77,21 @@ class DataModule(pl.LightningDataModule):
         return torch.utils.data.DataLoader(
             dataset,
             batch_size=self.batch_size_train,
-            shuffle=True,
+            shuffle=False,
             num_workers=self.workers,
         )
 
     def val_dataloader(self):
-        None
+        
+        dataset = self._dataset_hg["test"]
+
+        return torch.utils.data.DataLoader(
+            dataset,
+            batch_size=self.batch_size_train,
+            shuffle=False,
+            num_workers=self.workers,
+        )
+      
 
     def test_dataloader(self):
         None
@@ -96,11 +106,11 @@ class DataModule(pl.LightningDataModule):
 def cli_main():
 
     checkpoint_callback_spaced = ModelCheckpoint(
-        every_n_train_steps=5000,
+        every_n_train_steps=1000,
     )
     # Some bug in lightning, this needs to be set manually outside of
     # the constructor..complains aboout monitor not set otherwise
-    checkpoint_callback_spaced.save_top_k = 2
+    # checkpoint_callback_spaced.save_top_k = 2
 
     checkpoint_callback = ModelCheckpoint(
         save_on_train_epoch_end=True,

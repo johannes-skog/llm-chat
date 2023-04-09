@@ -4,15 +4,15 @@ trainer:
   accelerator: auto
   default_root_dir: artifacts
   # resume_from_checkpoint: null # reload the model
-  max_epochs: 1
-  accumulate_grad_batches: 16
+  max_epochs: 10
+  accumulate_grad_batches: 2
   log_every_n_steps: 1
-  val_check_interval: 100
+  val_check_interval: 1000
   enable_checkpointing: true
-  strategy: deepspeed_stage_2
+  # strategy: deepspeed_stage_2
   devices: auto
   num_nodes: 1
-  precision: bf16
+  precision: 16
   logger: null
   callbacks: null
   fast_dev_run: false
@@ -30,26 +30,24 @@ trainer:
   deterministic: null
   benchmark: null
   inference_mode: false
-  # use_distributed_sampler: false
   detect_anomaly: false
-  # barebones: false
   plugins: null
   sync_batchnorm: false
   reload_dataloaders_every_n_epochs: 0
 model:
-  T_0: 125
+  T_0: 2000
   T_mult: 2
-  learning_rate: 1.0e-04 # Same as alpaca 
+  learning_rate: 1.0e-04 
   lora: true
   base_model:
-    class_path: model.Llama
+    class_path: model.Gpt2
     init_args:
       from_pretrained: true
 data: 
   local: true
   dataset_name: gpt2_alpaca_data_cleaned
-  batch_size_train: 5
-  # subset_train: 10
+  batch_size_train: 8
+  # subset_train: 100
   workers: 2
 
 
