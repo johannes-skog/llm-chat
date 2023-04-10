@@ -1,21 +1,14 @@
-import subprocess
-import sys
 import os
 import torch
-from datasets import load_dataset
-import argparse
-from azureml.core.run import Run
-from azureml.core.dataset import Dataset
-from datasets import load_dataset, load_from_disk
+import sys
+from datasets import load_from_disk
 from azureml.core.model import Model
 from model import GeneratorModel
 from azure.ai.ml.entities import Model
 from azure.ai.ml.constants import AssetTypes
-from azure.ai.ml.entities import Data
 from azure.ai.ml.constants import AssetTypes
 from util import (
     get_ml_client,
-    get_latest_data_version,
     download_dataset,
     download_model,
     DataNames,
@@ -24,14 +17,15 @@ from util import (
 import torchmetrics
 from lightning.pytorch.cli import LightningCLI
 import lightning.pytorch as pl
-from lightning.pytorch.demos.boring_classes import DemoModel, BoringDataModule
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
 import transformers
+from util import AzureBlobStorageCheckpoint
 from model import Gpt2, Llama
+import argparse
+import yaml
+import json
 
-def main():
-    pass
 
 class DataModule(pl.LightningDataModule):
     
@@ -83,7 +77,7 @@ class DataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         
-        dataset = self._dataset_hg["test"]
+        dataset = self._dataset_hg["test"].select(range(8))
 
         return torch.utils.data.DataLoader(
             dataset,
@@ -91,7 +85,6 @@ class DataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=self.workers,
         )
-      
 
     def test_dataloader(self):
         None
@@ -103,7 +96,21 @@ class DataModule(pl.LightningDataModule):
         # Used to clean-up when the run is finished
         ...
 
-def cli_main():
+class ModLightningCLI(LightningCLI):
+
+    def add_arguments_to_parser(self, parser):
+        parser.add_argument("--run_name", default=None)
+
+class CustomCallback(pl.callbacks.Callback):
+    def on_train_start(self, trainer, pl_module):
+        print("Training is starting")
+
+    def on_train_end(self, trainer, pl_module):
+        print("Training is ending")
+
+def setup_callbacks():
+
+    callbacks = []
 
     checkpoint_callback_spaced = ModelCheckpoint(
         every_n_train_steps=1000,
@@ -112,50 +119,84 @@ def cli_main():
     # the constructor..complains aboout monitor not set otherwise
     # checkpoint_callback_spaced.save_top_k = 2
 
-    checkpoint_callback = ModelCheckpoint(
-        save_on_train_epoch_end=True,
-    )
+    callbacks.append(checkpoint_callback_spaced)
+
+    # Save to Azure blob storage
+    if False:
+
+        checkpoint_az = AzureBlobStorageCheckpoint(
+            connection_string=os.getenv("AZURE_CHECKPOINT_CONNECTION_STRING"),
+            container_name=os.getenv("AZURE_CHECKPOINT_CONTAINER_NAME"),
+            save_top_k=2,
+            monitor="loss_val",
+            mode="min",
+            filename='{epoch}-{loss_val:.4f}',
+        )
+        callbacks.append(checkpoint_az)
+
+    else:
+
+        # Save the two best checkpoints
+        checkpoint_callback_val = ModelCheckpoint(
+            save_top_k=2,
+            monitor="loss_val",
+            mode="min",
+            filename='{epoch}-{loss_val:.4f}',
+        )
+
+        callbacks.append(checkpoint_callback_val)
+
+    return callbacks, checkpoint_callback_spaced
+
+def cli_main():
+
+    callbacks, checkpointer = setup_callbacks()
     
-    cli = LightningCLI(
+    cli = ModLightningCLI(
         save_config_overwrite=True,
         model_class=GeneratorModel,
         trainer_class=pl.Trainer,
         datamodule_class=DataModule,
         run=False,
         trainer_defaults={
-            "callbacks": [
-                checkpoint_callback_spaced,
-            ],
+            "callbacks": callbacks,
         }
+    )  
+   
+    # we can always append after the fact
+    cli.trainer.callbacks.append(CustomCallback())
+
+    arguments = cli.config
+
+    is_local = arguments["data"].local
+
+    cli.trainer.logger = TensorBoardLogger(
+        "artifacts",
+        name="alpaca",
+        version=arguments["run_name"],
     )
 
-    cli.trainer.logger = TensorBoardLogger("artifacts", name="alpaca")
-
-    return cli, checkpoint_callback_spaced
+    return cli, checkpointer, is_local
 
 if __name__ == "__main__":
 
-    cli, checkpoint_callback = cli_main()
+    cli, checkpoint_callback, is_local = cli_main()
 
     model = cli.model
 
     cli.trainer.fit(model, cli.datamodule)
 
-    cli.trainer.save_checkpoint("artifacts/final.ckpt")
-
     is_llama_model = isinstance(model._model, Llama)
 
-    best_model_path = checkpoint_callback.best_model_path
-    print(best_model_path)
-
     cli.trainer.save_checkpoint("artifacts/final.ckpt")
 
-    print("Download tokenizer")
-    tokenizer_name = (
-        DataNames.GPT2_TOKENIZER if is_llama_model is False else DataNames.LLAMA_DATASET
-    )
+    if is_local is False:
 
-    if cli.datamodule.local is False:
+        print("Download tokenizer")
+        tokenizer_name = (
+            DataNames.GPT2_TOKENIZER if is_llama_model is False else DataNames.LLAMA_DATASET
+        )
+
         download_model(
             ml_client=get_ml_client(),
             name=tokenizer_name,
@@ -171,13 +212,13 @@ if __name__ == "__main__":
             "artifacts/tokenizer"
         )
 
-    best_model_path = checkpoint_callback.best_model_path
-
     print("Creating a traced model")
     traced_model = create_traced_model(tokenizer, model._model) # Do it on the pt model
     traced_model.save("artifacts/traced.pt")
 
-    if cli.datamodule.local is False:
+    if is_local is False:
+
+        best_model_path = checkpoint_callback.best_model_path
 
         ml_client = get_ml_client()
 

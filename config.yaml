@@ -1,13 +1,14 @@
 # lightning.pytorch==2.0.0
 seed_everything: true
+run_name: firstlight
 trainer:
   accelerator: auto
   default_root_dir: artifacts
   # resume_from_checkpoint: null # reload the model
-  max_epochs: 1
-  accumulate_grad_batches: 16
+  max_epochs: 3
+  accumulate_grad_batches: 4
   log_every_n_steps: 1
-  val_check_interval: 100
+  val_check_interval: 1000
   enable_checkpointing: true
   strategy: deepspeed_stage_2
   devices: auto
@@ -23,13 +24,13 @@ trainer:
   limit_val_batches: null
   limit_test_batches: null
   limit_predict_batches: null
-  enable_progress_bar: null
-  enable_model_summary: null
+  enable_progress_bar: true
+  enable_model_summary: true
   gradient_clip_val: null
   gradient_clip_algorithm: null
   deterministic: null
   benchmark: null
-  inference_mode: false
+  inference_mode: true
   # use_distributed_sampler: false
   detect_anomaly: false
   # barebones: false
@@ -37,9 +38,9 @@ trainer:
   sync_batchnorm: false
   reload_dataloaders_every_n_epochs: 0
 model:
-  T_0: 125
+  T_0: 1000
   T_mult: 2
-  learning_rate: 1.0e-04 # Same as alpaca 
+  learning_rate: 1.0e-04 
   lora: true
   base_model:
     class_path: model.Llama
@@ -48,7 +49,7 @@ model:
 data: 
   local: true
   dataset_name: gpt2_alpaca_data_cleaned
-  batch_size_train: 5
+  batch_size_train: 4
   # subset_train: 10
   workers: 2
 

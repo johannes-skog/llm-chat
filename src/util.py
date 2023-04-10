@@ -141,3 +141,69 @@ def unshard_deepspeed(save_path: str, output_path: str = "final.ckpt"):
     # https://lightning.ai/docs/pytorch/stable/advanced/model_parallel.html#deepspeed-zero-stage-3-single-file
     convert_zero_checkpoint_to_fp32_state_dict(save_path, output_path)
     # Only the LORA-params are saved to final.ckpt -> non strict load from checkpoint after the initial weights have been loaded
+
+
+
+import os
+from typing import Optional
+from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
+from lightning.pytorch.callbacks import ModelCheckpoint
+
+class AzureBlobStorageCheckpoint(ModelCheckpoint):
+
+    def __init__(self, connection_string: str, container_name: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.container_name = container_name
+        self.blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+
+    def push_to_az(self, filepath: str) -> None:
+        # Upload the saved checkpoint to Azure Blob Storage
+        blob_name = os.path.relpath(filepath, self.dirpath)
+        blob_client = self.blob_service_client.get_blob_client(container=self.container_name, blob=blob_name)
+        
+        print("pushing to azure", filepath, " as ", blob_name)
+
+        with open(filepath, "rb") as data:
+            blob_client.upload_blob(data)
+
+    def _save_checkpoint(self, trainer: str, filepath: str) -> None:
+        # Save model locally
+        trainer.save_checkpoint(filepath, self.save_weights_only)
+        
+        self.push_to_az(filepath)
+
+    def download_blob(self, blob: str, destination: str):
+
+        blob_client = self.blob_service_client.get_blob_client(container=self.container_name, blob=blob)
+        with open(destination, "wb") as download_file:
+            download_file.write(blob_client.download_blob().readall())
+
+    def download_latest_checkpoint(self, checkpoints_dir: str) -> Optional[str]:
+        # Create ContainerClient
+        container_client = self.blob_service_client.get_container_client(self.container_name)
+
+        # List all blobs in the container
+        blobs = container_client.list_blobs()
+
+        # Find the latest checkpoint based on the modification time
+        latest_checkpoint = None
+        latest_checkpoint_time = None
+        for blob in blobs:
+            if latest_checkpoint_time is None or blob.last_modified > latest_checkpoint_time:
+                latest_checkpoint = blob
+                latest_checkpoint_time = blob.last_modified
+
+        if latest_checkpoint is None:
+            return None
+
+        # Download the latest checkpoint
+        os.makedirs(checkpoints_dir, exist_ok=True)
+
+        local_checkpoint_path = os.path.join(checkpoints_dir, latest_checkpoint.name)
+
+        self.download_blob(
+            blob=latest_checkpoint.name,
+            destination=local_checkpoint_path
+        )
+
+        return local_checkpoint_path

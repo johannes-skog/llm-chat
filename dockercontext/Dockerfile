@@ -11,7 +11,8 @@ RUN apt-get -y install \
     wget \
     build-essential \
     screen \
-    git
+    git \ 
+    htop
 
 # install az-cli
 RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
@@ -24,3 +25,6 @@ RUN pip install -r /tmp/requirements.txt
 
 COPY entrypoint.sh /tmp
 ENTRYPOINT ["bash", "/tmp/entrypoint.sh"]
+
+ENV PATH="${PATH}:/opt/conda/bin/"
+
