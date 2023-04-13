@@ -1,6 +1,6 @@
 # lightning.pytorch==2.0.0
 seed_everything: true
-run_name: firstlight
+run_name: test_flops_limit = 0.7
 trainer:
   accelerator: auto
   default_root_dir: artifacts
@@ -8,12 +8,16 @@ trainer:
   max_epochs: 3
   accumulate_grad_batches: 4
   log_every_n_steps: 1
-  val_check_interval: 1000
+  val_check_interval: 2000
   enable_checkpointing: true
-  strategy: deepspeed_stage_2
+  # strategy: deepspeed_stage_3
+  strategy:
+    class_path: lightning.pytorch.strategies.DeepSpeedStrategy
+    init_args: 
+      config: deepspeed.json
   devices: auto
   num_nodes: 1
-  precision: bf16
+  # precision: bf16
   logger: null
   callbacks: null
   fast_dev_run: false
@@ -38,17 +42,26 @@ trainer:
   sync_batchnorm: false
   reload_dataloaders_every_n_epochs: 0
 model:
-  T_0: 1000
+
+  T_0: 2000
   T_mult: 2
   learning_rate: 1.0e-04 
+  
+  model: decapoda-research/llama-7b-hf
+
   lora: true
-  base_model:
-    class_path: model.Llama
-    init_args:
-      from_pretrained: true
+  lora_r: 16
+  lora_alpha: 16
+  lora_target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+  lora_pretrained: null
+
+  # When calling load_pretrained
+  load_in_8bit: true
+  device_map: "auto"
+  
 data: 
   local: true
-  dataset_name: gpt2_alpaca_data_cleaned
+  dataset_name: decapoda-research/llama-7b-hf
   batch_size_train: 4
   # subset_train: 10
   workers: 2

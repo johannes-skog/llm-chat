@@ -4,4 +4,6 @@ screen -S tensorboard -dm bash -c "tensorboard --logdir artifacts --port 6006 --
 
 PATH=/opt/conda/bin/:${PATH}
 
+HF_DATASETS_CACHE="/hgcache"
+
 sleep infinity

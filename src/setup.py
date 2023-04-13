@@ -3,10 +3,11 @@ import argparse
 from azure.ai.ml.entities import Model
 from azure.ai.ml.entities import Data
 from azure.ai.ml.constants import AssetTypes
-from util import get_ml_client, generate_prompt, TokenizerTokens
+from util import get_ml_client, generate_prompt, setup_tokenizer
 import transformers
 from util import DataNames, IGNORE_LOSS_ID
 import copy 
+from transformers import AutoTokenizer
 
 def _setup_dataset(tokenizer, path: str, destination: str, debug: bool = False):
 
@@ -97,44 +98,24 @@ def main():
     )
 
     parser.add_argument(
-        '--model', type=str, default='llama',
-    )
-
-    parser.add_argument(
         '--local',
         action='store_true',
         default=False,
         help="do not push any to the cloud"
     )
 
+    parser.add_argument(
+        '--model',
+        default="decapoda-research/llama-7b-hf",
+        help="which model to use"
+    )
+
     args = parser.parse_args()
 
-    assert args.model in ['llama', 'gpt2'], "only llama and gpt2 are supported"
+    tokenizer = setup_tokenizer(args.model, max_tokens=args.max_tokens) 
 
-    if args.model == "llama":
-        
-        tokenizer = transformers.LlamaTokenizer.from_pretrained(
-            "decapoda-research/llama-7b-hf"
-        )
-
-        tokenizer.add_special_tokens(
-            {
-                "eos_token": TokenizerTokens.DEFAULT_EOS_TOKEN,
-                "bos_token": TokenizerTokens.DEFAULT_BOS_TOKEN,
-                "unk_token": TokenizerTokens.DEFAULT_UNK_TOKEN,
-                "pad_token": TokenizerTokens.DEFAULT_PAD_TOKEN,
-            }
-        )
-    else:
-
-        tokenizer = transformers.GPT2Tokenizer.from_pretrained("gpt2-large")
-        # add_special_tokens for gpt2 tokenizer is out of vocabulary -> added token... embedding will crash
-        tokenizer.pad_token = tokenizer.eos_token
-
-    tokenizer.model_max_length = args.max_tokens
-
-    tokenizer_path = f"artifacts/tokenizer" 
-    dataset_path = f"artifacts/dataset" 
+    tokenizer_path = f"artifacts/tokenizer/{args.model}" 
+    dataset_path = f"artifacts/dataset/{args.model}" 
 
     print("working with the dataset")
     dataset = _setup_dataset(
@@ -153,7 +134,7 @@ def main():
         file_model = Model(
             path=tokenizer_path,
             type=AssetTypes.CUSTOM_MODEL,
-            name=DataNames.GPT2_TOKENIZER if args.model == "gpt2" else DataNames.LLAMA_TOKENIZER ,
+            name=f"tokenizer_{args.model}",
             description=f"{args.model} tokenizer for hg",
         )
         ml_client.models.create_or_update(file_model)
@@ -162,9 +143,11 @@ def main():
             path=dataset_path,
             type=AssetTypes.URI_FOLDER,
             description=f"alpaca data cleaned for {args.model}",
-            name=DataNames.GPT2_DATASET if args.model == "gpt2" else DataNames.LLAMA_DATASET,
+            name=f"{args.model}",
         )
         ml_client.data.create_or_update(dataset)
+
+    print("done")
 
 if __name__ == "__main__":
     main()
