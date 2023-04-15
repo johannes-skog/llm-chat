@@ -111,7 +111,6 @@ class GeneratorModel(pl.LightningModule):
         model: str = "decapoda-research/llama-7b-hf",
         lora_pretrained: str = None,
         lora_target_modules: List[str] = None,
-        load_in_8bit: bool = False,
         **kwargs,
     ):
         
@@ -119,8 +118,6 @@ class GeneratorModel(pl.LightningModule):
         
         self._model = transformers.AutoModelForCausalLM.from_pretrained(
             model,
-            load_in_8bit=load_in_8bit,
-            device_map='auto',
             **kwargs
         )
 

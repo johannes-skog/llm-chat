@@ -1,25 +1,61 @@
 # lightning.pytorch==2.0.0
-seed_everything: true
-run_name: test_flops_limit = 0.7
+
+seed: 64566
+resume_from_checkpoint: null
+save_every_n_steps: 1000
+
+logger:
+  save_dir: artifacts/runs
+  name: alpacha
+  version: null
+
+deepspeed: '
+  {
+      "fp16": {
+            "enabled": true,
+            "loss_scale": 0,
+            "loss_scale_window": 1000,
+            "initial_scale_power": 16,
+            "hysteresis": 2,
+            "min_loss_scale": 1
+      },
+      "optimizer": {
+            "type": "AdamW",
+            "params": {
+                  "lr": 0.0001,
+                  "weight_decay": 0
+            }
+      },
+      "scheduler": {
+            "type": "WarmupLR",
+            "params": {
+                  "last_batch_iteration": -1,
+                  "warmup_min_lr": 0,
+                  "warmup_max_lr": 0.0001,
+                  "warmup_num_steps": 500
+            }
+      },
+      "zero_optimization": {
+            "stage": 3,
+            "overlap_comm": true,
+            "contiguous_gradients": true,
+            "offload_optimizer": True,  # Enable Offloading optimizer state/calculation to the host CPU
+      }
+}
+'
+
 trainer:
   accelerator: auto
   default_root_dir: artifacts
-  # resume_from_checkpoint: null # reload the model
-  max_epochs: 3
-  accumulate_grad_batches: 4
+  max_epochs: 5
+  accumulate_grad_batches: 2
   log_every_n_steps: 1
   val_check_interval: 2000
   enable_checkpointing: true
-  # strategy: deepspeed_stage_3
-  strategy:
-    class_path: lightning.pytorch.strategies.DeepSpeedStrategy
-    init_args: 
-      config: deepspeed.json
-  devices: auto
+  strategy: deepspeed_stage_3
+  devices: auto # Use all
   num_nodes: 1
-  # precision: bf16
-  logger: null
-  callbacks: null
+  precision: 16
   fast_dev_run: false
   min_epochs: null
   min_steps: null
@@ -35,12 +71,11 @@ trainer:
   deterministic: null
   benchmark: null
   inference_mode: true
-  # use_distributed_sampler: false
   detect_anomaly: false
-  # barebones: false
   plugins: null
   sync_batchnorm: false
   reload_dataloaders_every_n_epochs: 0
+
 model:
 
   T_0: 2000
@@ -56,13 +91,13 @@ model:
   lora_pretrained: null
 
   # When calling load_pretrained
-  load_in_8bit: true
-  device_map: "auto"
+  load_in_8bit: false
+  device_map: null
   
 data: 
   local: true
   dataset_name: decapoda-research/llama-7b-hf
-  batch_size_train: 4
+  batch_size: 5
   # subset_train: 10
   workers: 2
 

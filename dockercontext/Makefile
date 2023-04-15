@@ -10,7 +10,7 @@ build:
 
 	docker stop ${PROJECT_NAME} || true && docker rm ${PROJECT_NAME} || true
 	docker build -t ${PROJECT_NAME} .
-	docker run -dt -w /workspace  --name ${PROJECT_NAME} -v ${PWD}/../:/workspace -w /workspace -p 8080:8080 -p 8889:8889 -p 6006:6006 --env-file ../.env ${PROJECT_NAME} sleep infinity
+	docker run -dt -w /workspace  --name ${PROJECT_NAME} -v ${PWD}/../:/workspace -w /workspace -p 8080:8080 -p 55069:55069 -p 55068:55068 -p 6006:6006 --env-file ../.env ${PROJECT_NAME} sleep infinity
 
 enter:
 

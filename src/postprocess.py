@@ -68,7 +68,7 @@ def main():
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         "artifacts/tokenizer"
-    )   
+    )
 
     model = GeneratorModel(**config["model"])
 

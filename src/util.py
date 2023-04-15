@@ -245,3 +245,15 @@ class AzureBlobStorageCheckpoint(ModelCheckpoint):
         self.azure_blob_storage.download_blob(latest_checkpoint_name, local_checkpoint_path)
 
         return local_checkpoint_path
+    
+def remove(path: str):
+    import shutil
+    """ param <path> could either be relative or absolute. """
+    if not os.path.exists(path):
+        return
+    if os.path.isfile(path) or os.path.islink(path):
+        os.remove(path)  # remove the file
+    elif os.path.isdir(path):
+        shutil.rmtree(path)  # remove dir and all contains
+    else:
+        raise ValueError("file {} is not a file or dir.".format(path))
