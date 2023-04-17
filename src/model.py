@@ -1,102 +1,102 @@
 from abc import abstractmethod
-import os
-from typing import List, Any,Dict
+from typing import List
 import torch
-from transformers import AutoTokenizer, AutoModelForMaskedLM
-from dataclasses import dataclass, field
-from torch.utils.tensorboard import SummaryWriter
 import peft
 import lightning.pytorch as pl
-import torchmetrics
 import transformers
-# import deepspeed
 import numpy as np
 from util import IGNORE_LOSS_ID
 from checkpointing import CheckpointModel
-from deepspeed.ops.adam import DeepSpeedCPUAdam
-from deepspeed.ops.adam import FusedAdam
+import torch
+import numpy as np
+from typing import Union, List
+from transformers import AutoTokenizer
 
+def sample_top_p(probs, p):
+    probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
+    probs_sum = torch.cumsum(probs_sort, dim=-1)
+    mask = probs_sum - probs_sort > p
+    probs_sort[mask] = 0.0
+    probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+    next_token = torch.multinomial(probs_sort, num_samples=1)
+    next_token = torch.gather(probs_idx, -1, next_token)
+    return next_token
 
-class Llama(torch.nn.Module):
+def _generate_next_token(
+    model,
+    tokenizer,
+    input_ids,
+    temperature=1.0,
+    top_p=0.95,
+    device='cpu'
+):
     
-    def __init__(self, from_pretrained: bool = False, **kwargs):
+    # Ensure the model is in evaluation mode
+    model.eval()
+
+    # Move input tensor to the specified device
+    input_ids = torch.Tensor([input_ids]).to(device).long()
+    
+    # Generate output with the model
+    with torch.no_grad():
+        logits = model(input_ids)
+
+    # Apply temperature scaling to logits
+    logits = logits[:, -1, :] / temperature
+    
+    probs = torch.softmax(logits, dim=-1)
+  
+    next_token_ids = sample_top_p(probs, top_p).item()
+    
+    if next_token_ids == tokenizer.eos_token_id:
+        return None
+
+    return next_token_ids
+
+def generate_next_tokens(
+    model: torch.nn.Module,
+    tokenizer,
+    promt: str,
+    temperature: float =1.0,
+    top_p: float =0.95,
+    max_length: int = 100,
+    device: str = 'cpu',
+):
         
-        super().__init__()
-        
-        if from_pretrained:
+    input_ids = tokenizer(promt)["input_ids"]
+    
+    s = len(input_ids)
 
-            self._model = transformers.LlamaForCausalLM.from_pretrained(
-                "decapoda-research/llama-7b-hf",
-                **kwargs
-            )
-            
-        else:
-            
-            self._model = transformers.LlamaForCausalLM(
-                config=transformers.LlamaConfig()
-            )
+    try: 
+        from IPython.display import clear_output
+    except ImportError:
+        clear_output = None
 
-        self._vobab_size = 32000
+    for i in range(max_length):
 
-    def setup_lora(self):
-
-        peft_config = peft.LoraConfig(
-            task_type=peft.TaskType.CAUSAL_LM,
-            inference_mode=False,
-            r=16,
-            lora_alpha=16,
-            lora_dropout=0.05,
-            target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
-            bias="none",
+        next_token = _generate_next_token(
+            input_ids=input_ids,
+            model=model,
+            tokenizer=tokenizer,
+            temperature=temperature,
+            top_p=top_p,
+            device=device
         )
 
-        self._model = peft.get_peft_model(self._model, peft_config)
-    
-    def generate(self, *args, **kwargs):
-        return self._model.generate(*args, **kwargs)
+        if next_token is None:
+            break
 
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor):
-        return self._model(input_ids=input_ids, attention_mask=attention_mask).logits
-            
-class Gpt2(torch.nn.Module):
-    
-    def __init__(self, from_pretrained: bool = False, **kwargs):
+        input_ids.append(next_token)
+
+        if clear_output is not None: clear_output(wait=True)
         
-        super().__init__()
+        decoded = tokenizer.decode(input_ids[s:])
+
+        print(decoded, end = "\r")
         
-        if from_pretrained:
-            
-            self._model = transformers.GPT2LMHeadModel.from_pretrained(
-                "gpt2", is_decoder=True, **kwargs
-            )
-            
-        else:
-            
-            self._model = transformers.GPT2LMHeadModel(
-                config=transformers.GPT2Config()
-            )
+    return decoded
 
-        self._vobab_size = 50257
 
-    def generate(self, *args, **kwargs):
-        return self._model.generate(*args, **kwargs)
-
-    def setup_lora(self):
-
-        peft_config = peft.LoraConfig(
-            task_type=peft.TaskType.CAUSAL_LM,
-            inference_mode=False,
-            r=16,
-            lora_alpha=16,
-            lora_dropout=0.05,
-            # target_modules=["c_attn", "c_proj"],
-        )
-
-        self._model = peft.get_peft_model(self._model, peft_config)
-
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor):
-        return self._model(input_ids=input_ids, attention_mask=attention_mask).logits
-            
 class GeneratorModel(pl.LightningModule):
     
     def __init__(
@@ -161,11 +161,19 @@ class GeneratorModel(pl.LightningModule):
     
     def save_pretrained(self, *args, **kwargs):
         return self._model.save_pretrained(*args, **kwargs)
-
+    
     def load_lora_pretrained(self, path: str):
 
-        d = {k: v for k, v in torch.load(path)["state_dict"].items() if "lora" in k}
+        w1 = {name: param[0][0].item() for name, param in self.named_parameters() if "lora" in name}
+
+        d = {k: v for k, v in torch.load(path).items() if "lora" in k}
         self._model.load_state_dict(d, strict=False)
+
+        w2 = {name: param[0][0].item() for name, param in self.named_parameters() if "lora" in name}
+
+        equals = [w1[k] == w2[k]  for k in w2.keys()]
+
+        assert any(equals) is False, "Lora weights are not loaded"
 
     def forward(self, *args, **kwargs):
         
@@ -204,10 +212,11 @@ class GeneratorModel(pl.LightningModule):
             attention_mask=batch["attention_mask"],
         )
         
+        
         l, accuracy, accuracy_all = self.loss_function(
             logits=y, labels=batch["target_ids"]
         )
-        
+
         self.log("learning_rate", self.optimizers().param_groups[0]["lr"])
         self.log("loss_train", l)
         self.log("accuracy_train", accuracy)

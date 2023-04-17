@@ -31,6 +31,8 @@ import argparse
 
 def setup_callbacks(save_every_n_steps: int = 2000):
 
+    print(save_every_n_steps)
+
     callbacks = []
 
     checkpoint_callback_spaced = ModelCheckpoint(
@@ -189,7 +191,7 @@ def cli_main():
         config["trainer"]["strategy"] = strategy
 
     if torch.cuda.is_available() is False:
-        config["trainer"]["precision"] = 32 # we cant use 16 bit precision on cpu
+        config["trainer"]["precision"] = 32 # we can't use 16 bit precision on cpu
 
     model = GeneratorModel(**config["model"])
 
@@ -231,9 +233,9 @@ if __name__ == "__main__":
 
     remove(save_path)
 
-    trainer.save_checkpoint(save_path)
-
     print("Saving model to {}".format(save_path))
+
+    model.save_pretrained(save_path)
 
     if args.local is False:
 
@@ -254,7 +256,7 @@ if __name__ == "__main__":
         "artifacts/tokenizer"
     )
 
-    best_model_path = checkpointer.best_model_path
+    best_model_path = save_path
 
     print("Best model path", best_model_path)
 
@@ -262,25 +264,11 @@ if __name__ == "__main__":
 
         ml_client = get_ml_client()
 
-        """
-        print("Creating a traced model")
-        traced_model = create_traced_model(tokenizer, model._model) # Do it on the pt model
-        traced_model.save("artifacts/traced.pt")
-        print("Register a traced model")
-        file_model = Model(
-            path="artifacts/traced.pt",
-            type=AssetTypes.CUSTOM_MODEL,
-            name="TEST_alpaca_traced",
-            description="XLMR trained on twitter sentiment dataset. traced"
-        )
-        ml_client.models.create_or_update(file_model)
-        """
-
         print("Register model")
         file_model = Model(
             path=best_model_path,
             type=AssetTypes.CUSTOM_MODEL,
-            name="TEST_alpaca",
+            name="alpacha_lora",
             description="Llama trained on alpaca data"
         )
         ml_client.models.create_or_update(file_model)

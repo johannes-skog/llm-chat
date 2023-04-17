@@ -257,3 +257,32 @@ def remove(path: str):
         shutil.rmtree(path)  # remove dir and all contains
     else:
         raise ValueError("file {} is not a file or dir.".format(path))
+    
+
+def generate_text(model: torch.nn.Module, tokenizer, text, max_length: int = 200, device: str = "cuda"):
+
+    input_ids = tokenizer(text, return_tensors="pt")["input_ids"]
+
+    generation_config = transformers.GenerationConfig(
+        max_new_tokens=max_length,
+        temperature=0.8,
+        top_p=0.95,
+        sample=True,
+        repetition_penalty=1.2
+    )
+
+    model.eval()
+
+    with torch.no_grad():
+
+        outputs = model.generate(
+            input_ids=input_ids.to(device),
+            generation_config=generation_config,
+            return_dict_in_generate=True,
+            output_scores=True,
+            pad_token_id=tokenizer.pad_token_id,
+        )
+
+    response = tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
+    
+    return response
