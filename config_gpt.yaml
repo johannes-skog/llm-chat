@@ -1,19 +1,65 @@
 # lightning.pytorch==2.0.0
-seed_everything: true
-run_name: version!!!!
+
+seed: 64566
+
+resume_from_checkpoint: null
+save_every_n_steps: 1000
+
+deepspeed: '
+  {
+      "fp16": {
+            "enabled": true,
+            "loss_scale": 0,
+            "loss_scale_window": 1000,
+            "initial_scale_power": 16,
+            "hysteresis": 2,
+            "min_loss_scale": 1
+      },
+      "optimizer": {
+            "type": "AdamW",
+            "params": {
+                  "lr": 0.0001,
+                  "weight_decay": 0
+            }
+      },
+      "scheduler": {
+            "type": "WarmupLR",
+            "params": {
+                  "last_batch_iteration": -1,
+                  "warmup_min_lr": 0,
+                  "warmup_max_lr": 0.0001,
+                  "warmup_num_steps": 500
+            }
+      },
+      "zero_optimization": {
+            "stage": 2,
+            "overlap_comm": true,
+            "contiguous_gradients": true
+      }
+}
+'
+
+# deepspeed: null
+
+logger:
+  save_dir: artifacts/runs
+  name: gpt2
+  version: null
+
 trainer:
   accelerator: auto
   default_root_dir: artifacts
-  # resume_from_checkpoint: null # reload the model
-  max_epochs: 10
-  accumulate_grad_batches: 2
-  log_every_n_steps: 1000
-  val_check_interval: 2
+  # max_epochs: 1
+  accumulate_grad_batches: 1
+  max_steps: 5
+  log_every_n_steps: 1
+  val_check_interval: null
   enable_checkpointing: true
-  # strategy: deepspeed_stage_2
-  devices: auto
+  # strategy: deepspeed_stage_3
+  devices: auto # Use all
   num_nodes: 1
   precision: 32
+  fast_dev_run: false
   min_epochs: null
   min_steps: null
   max_time: null
@@ -21,32 +67,43 @@ trainer:
   limit_val_batches: null
   limit_test_batches: null
   limit_predict_batches: null
-  enable_progress_bar: null
-  enable_model_summary: null
+  enable_progress_bar: true
+  enable_model_summary: true
   gradient_clip_val: null
   gradient_clip_algorithm: null
   deterministic: null
   benchmark: null
-  inference_mode: false
+  inference_mode: true
   detect_anomaly: false
   plugins: null
   sync_batchnorm: false
   reload_dataloaders_every_n_epochs: 0
+
 model:
+
   T_0: 2000
   T_mult: 2
   learning_rate: 1.0e-04 
+  
+  model: gpt2
+
   lora: true
-  base_model:
-    class_path: model.Gpt2
-    init_args:
-      from_pretrained: true
+  lora_r: 16
+  lora_alpha: 16
+  lora_target_modules: null
+  lora_pretrained: null
+
+  # When calling load_pretrained
+  #load_in_8bit: false
+  #device_map: "auto"
+  
 data: 
   local: true
-  dataset_name: gpt2_alpaca_data_cleaned
-  batch_size_train: 8
-  # subset_train: 100
+  dataset_name: gpt2
+  batch_size: 2
+  subset_train: 2
   workers: 2
+  include_val: false
 
 
 
