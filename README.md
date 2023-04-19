@@ -29,7 +29,7 @@ if ```--local``` is not set, the dataset will get uploaded to Azure ML together 
 
 ## Memory requirements 
 
-For LLAMA 7 billion model 
+For LLAMA 7 billion model with LORA rank 16.
 
 | Scenario                     | Model    | Precision | Batch Size | DeepSpeed Stage | Memory (GB) |
 |------------------------------|----------|-----------|------------|-----------------|-------------|
@@ -106,6 +106,8 @@ reacher.get("<path>/final.ckpt", "weights/")
 ```
 
 # Inference 
+
+See notebook ```inference.ipynb``` for complete code.. 
 
 Load the config used during training, set 8 bit mode to be true for the inference. 
 
